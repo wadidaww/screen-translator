@@ -22,13 +22,14 @@ except Exception:  # pragma: no cover
 
 
 def setup_logging() -> None:
+    log_max_bytes = 2_000_000
     os.makedirs("logs", exist_ok=True)
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-    activity_handler = RotatingFileHandler("logs/activity.log", maxBytes=2_000_000, backupCount=3)
+    activity_handler = RotatingFileHandler("logs/activity.log", maxBytes=log_max_bytes, backupCount=3)
     activity_handler.setFormatter(formatter)
 
-    error_handler = RotatingFileHandler("logs/error.log", maxBytes=2_000_000, backupCount=3)
+    error_handler = RotatingFileHandler("logs/error.log", maxBytes=log_max_bytes, backupCount=3)
     error_handler.setLevel(logging.WARNING)
     error_handler.setFormatter(formatter)
 
@@ -74,7 +75,6 @@ class RegionSelector(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), Qt.GlobalColor.black)
         painter.setOpacity(0.3)
         painter.fillRect(self.rect(), Qt.GlobalColor.black)
         painter.setOpacity(1.0)
@@ -104,7 +104,7 @@ class TranslationWorker(QThread):
         self.capture.stop()
 
     def _looks_like_noise(self, text: str) -> bool:
-        return self.ocr._is_noise(text)
+        return self.ocr.is_noise(text)
 
     def run(self):
         self._running = True

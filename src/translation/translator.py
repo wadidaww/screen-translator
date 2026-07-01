@@ -15,6 +15,7 @@ except Exception:  # pragma: no cover
     argos_translate = None
 
 LOGGER = logging.getLogger(__name__)
+DEFAULT_RATE_LIMIT_SLEEP = 0.5
 
 
 class BaseTranslator:
@@ -60,7 +61,7 @@ class ArgosOfflineTranslator(BaseTranslator):
 
 
 class GoogleFreeFallbackTranslator(BaseTranslator):
-    def __init__(self, sleep_seconds: float = 0.5):
+    def __init__(self, sleep_seconds: float = DEFAULT_RATE_LIMIT_SLEEP):
         self.sleep_seconds = sleep_seconds
 
     def translate(self, text: str, source_lang: str, target_lang: str) -> str:

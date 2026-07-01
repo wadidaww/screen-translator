@@ -16,6 +16,7 @@ except Exception:  # pragma: no cover
 
 LOGGER = logging.getLogger(__name__)
 MIN_ALPHA_RATIO = 0.2
+ALPHA_PATTERN = r"[A-Za-z\u00C0-\u024F]"
 
 
 class OCREngine:
@@ -46,19 +47,19 @@ class OCREngine:
         return {"text": text, "confidence": confidence}
 
     @staticmethod
-    def _is_noise(text: str) -> bool:
+    def is_noise(text: str) -> bool:
         if not text:
             return True
         cleaned = text.strip()
         if len(cleaned) < 2:
             return True
-        alpha_ratio = len(re.findall(r"[A-Za-z\u00C0-\u024F]", cleaned)) / max(1, len(cleaned))
+        alpha_ratio = len(re.findall(ALPHA_PATTERN, cleaned)) / max(1, len(cleaned))
         return alpha_ratio < MIN_ALPHA_RATIO
 
     def extract_text(self, frame: Any) -> Dict[str, int | str]:
         processed = preprocess_for_ocr(frame)
         result = self._extract_with_tesseract(processed)
-        if result["confidence"] < self.confidence_threshold or self._is_noise(str(result["text"])):
+        if result["confidence"] < self.confidence_threshold or self.is_noise(str(result["text"])):
             LOGGER.warning("Low confidence OCR (%s), falling back to EasyOCR", result["confidence"])
             result = self._extract_with_easyocr(processed)
         del processed
