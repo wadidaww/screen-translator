@@ -46,7 +46,7 @@ class ConfigManager:
                 loaded = json.load(file)
             merged = dict(self.DEFAULTS)
             merged.update(loaded)
-            if "hotkeys" in loaded:
+            if isinstance(loaded.get("hotkeys"), dict):
                 merged["hotkeys"] = {**self.DEFAULTS["hotkeys"], **loaded["hotkeys"]}
             self._data = merged
         else:
