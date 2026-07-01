@@ -27,9 +27,10 @@ class OCRTests(unittest.TestCase):
             "conf": ["95", "96"],
         }
 
-        with patch("src.translation.ocr_engine.preprocess_for_ocr", return_value=frame), patch(
-            "src.translation.ocr_engine.pytesseract"
-        ) as mock_tesseract:
+        with (
+            patch("src.translation.ocr_engine.preprocess_for_ocr", return_value=frame),
+            patch("src.translation.ocr_engine.pytesseract") as mock_tesseract,
+        ):
             mock_tesseract.Output.DICT = object()
             mock_tesseract.image_to_data.return_value = mocked_result
             result = engine.extract_text(frame)

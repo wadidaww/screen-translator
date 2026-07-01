@@ -21,11 +21,7 @@ class ArgosModelManager:
         argos_package.update_package_index()
         available = argos_package.get_available_packages()
         match = next(
-            (
-                pkg
-                for pkg in available
-                if pkg.from_code == from_lang and pkg.to_code == to_lang
-            ),
+            (pkg for pkg in available if pkg.from_code == from_lang and pkg.to_code == to_lang),
             None,
         )
         if not match:

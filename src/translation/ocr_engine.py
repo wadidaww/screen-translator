@@ -29,7 +29,9 @@ class OCREngine:
             return {"text": "", "confidence": 0}
         data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
         words = [w.strip() for w in data.get("text", []) if w.strip()]
-        confidences = [int(float(c)) for c in data.get("conf", []) if str(c).strip() not in {"", "-1"}]
+        confidences = [
+            int(float(c)) for c in data.get("conf", []) if str(c).strip() not in {"", "-1"}
+        ]
         text = " ".join(words)
         confidence = int(sum(confidences) / len(confidences)) if confidences else 0
         return {"text": text, "confidence": confidence}

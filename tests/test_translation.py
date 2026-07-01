@@ -21,12 +21,17 @@ class TranslationTests(unittest.TestCase):
                     return DummyTranslation()
                 raise ValueError("missing")
 
-        dummy_module = SimpleNamespace(get_installed_languages=lambda: [DummyLang("en"), DummyLang("es")])
+        dummy_module = SimpleNamespace(
+            get_installed_languages=lambda: [DummyLang("en"), DummyLang("es")]
+        )
 
-        with patch("src.translation.translator.argos_translate", dummy_module), patch.object(
-            socket.socket,
-            "connect",
-            side_effect=AssertionError("Network should not be used"),
+        with (
+            patch("src.translation.translator.argos_translate", dummy_module),
+            patch.object(
+                socket.socket,
+                "connect",
+                side_effect=AssertionError("Network should not be used"),
+            ),
         ):
             translator = ArgosOfflineTranslator()
             result = translator.translate("Good morning", "en", "es")

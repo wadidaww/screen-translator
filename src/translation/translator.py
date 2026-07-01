@@ -31,8 +31,8 @@ class ArgosOfflineTranslator(BaseTranslator):
         if argos_translate is None:
             return None
         installed = argos_translate.get_installed_languages()
-        source = next((l for l in installed if l.code == source_lang), None)
-        target = next((l for l in installed if l.code == target_lang), None)
+        source = next((lang for lang in installed if lang.code == source_lang), None)
+        target = next((lang for lang in installed if lang.code == target_lang), None)
         if not source or not target:
             return None
         return source.get_translation(target)
@@ -47,7 +47,9 @@ class ArgosOfflineTranslator(BaseTranslator):
                 raise RuntimeError(f"Unable to install Argos model {source_lang}->{target_lang}")
             translation = self._find_translation(source_lang, target_lang)
             if translation is None:
-                raise RuntimeError(f"Argos model not available after install for {source_lang}->{target_lang}")
+                raise RuntimeError(
+                    f"Argos model not available after install for {source_lang}->{target_lang}"
+                )
 
         try:
             return translation.translate(text)

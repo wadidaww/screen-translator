@@ -1,8 +1,8 @@
 import hashlib
 import logging
-from logging.handlers import RotatingFileHandler
 import os
 import sys
+from logging.handlers import RotatingFileHandler
 
 from PyQt6.QtCore import QPoint, QRect, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QGuiApplication, QIcon, QPainter, QPen
@@ -26,7 +26,9 @@ def setup_logging() -> None:
     os.makedirs("logs", exist_ok=True)
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-    activity_handler = RotatingFileHandler("logs/activity.log", maxBytes=log_max_bytes, backupCount=3)
+    activity_handler = RotatingFileHandler(
+        "logs/activity.log", maxBytes=log_max_bytes, backupCount=3
+    )
     activity_handler.setFormatter(formatter)
 
     error_handler = RotatingFileHandler("logs/error.log", maxBytes=log_max_bytes, backupCount=3)
