@@ -14,6 +14,7 @@ OmniView Translator is a cross-platform desktop app for real-time screen OCR and
 2. Install Tesseract 5.x:
    - **Windows:** install from UB Mannheim builds and ensure `tesseract.exe` is in `PATH`.
    - **macOS:** `brew install tesseract`.
+   - **Linux (Debian/Ubuntu):** `sudo apt update && sudo apt install -y tesseract-ocr`.
 3. Install dependencies:
    ```bash
    pip install -r requirements.txt

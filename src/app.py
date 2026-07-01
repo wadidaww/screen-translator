@@ -2,7 +2,6 @@ import hashlib
 import logging
 from logging.handlers import RotatingFileHandler
 import os
-import re
 import sys
 
 from PyQt6.QtCore import QPoint, QRect, Qt, QThread, pyqtSignal
@@ -105,7 +104,7 @@ class TranslationWorker(QThread):
         self.capture.stop()
 
     def _looks_like_noise(self, text: str) -> bool:
-        return len(re.findall(r"[A-Za-z\u00C0-\u024F]", text)) < max(2, len(text) // 4)
+        return self.ocr._is_noise(text)
 
     def run(self):
         self._running = True

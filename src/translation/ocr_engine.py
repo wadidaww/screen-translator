@@ -15,6 +15,7 @@ except Exception:  # pragma: no cover
     pytesseract = None
 
 LOGGER = logging.getLogger(__name__)
+MIN_ALPHA_RATIO = 0.2
 
 
 class OCREngine:
@@ -52,7 +53,7 @@ class OCREngine:
         if len(cleaned) < 2:
             return True
         alpha_ratio = len(re.findall(r"[A-Za-z\u00C0-\u024F]", cleaned)) / max(1, len(cleaned))
-        return alpha_ratio < 0.2
+        return alpha_ratio < MIN_ALPHA_RATIO
 
     def extract_text(self, frame: Any) -> Dict[str, int | str]:
         processed = preprocess_for_ocr(frame)
