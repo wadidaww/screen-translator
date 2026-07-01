@@ -6,12 +6,12 @@ from src.translation.model_manager import ArgosModelManager
 
 try:
     from deep_translator import GoogleTranslator
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     GoogleTranslator = None
 
 try:
     import argostranslate.translate as argos_translate
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     argos_translate = None
 
 LOGGER = logging.getLogger(__name__)

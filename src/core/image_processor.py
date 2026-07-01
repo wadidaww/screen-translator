@@ -2,7 +2,7 @@ from typing import Any
 
 try:
     import cv2
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     cv2 = None
 
 

@@ -17,7 +17,7 @@ from src.ui.overlay_window import OverlayWindow
 
 try:
     from langdetect import detect
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     detect = None
 
 

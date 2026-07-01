@@ -6,12 +6,12 @@ from src.core.image_processor import preprocess_for_ocr
 
 try:
     import easyocr
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     easyocr = None
 
 try:
     import pytesseract
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     pytesseract = None
 
 LOGGER = logging.getLogger(__name__)

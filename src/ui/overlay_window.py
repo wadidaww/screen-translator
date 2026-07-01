@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import QGraphicsOpacityEffect, QVBoxLayout, QWidget
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     QWebEngineView = None
 
 

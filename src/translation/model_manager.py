@@ -3,7 +3,7 @@ from typing import Callable, Optional
 
 try:
     import argostranslate.package as argos_package
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     argos_package = None
 
 LOGGER = logging.getLogger(__name__)

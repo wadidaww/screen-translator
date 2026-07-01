@@ -5,12 +5,12 @@ from typing import Any, Optional, Tuple
 
 try:
     import numpy as np
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     np = None
 
 try:
     import mss
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     mss = None
 
 LOGGER = logging.getLogger(__name__)
