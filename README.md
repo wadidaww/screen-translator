@@ -24,6 +24,30 @@ OmniView Translator is a cross-platform desktop app for real-time screen OCR and
    python -m src.app
    ```
 
+## Development
+Install development dependencies:
+```bash
+pip install -r requirements-dev.txt
+```
+
+Run formatter:
+```bash
+black src tests
+```
+
+Run linter:
+```bash
+ruff check src tests
+```
+
+Run tests:
+```bash
+python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+CI/CD is configured via GitHub Actions (`.github/workflows/ci-cd.yml`) to run format checks,
+linter checks, tests, and package builds.
+
 Argos language models are downloaded automatically on first use for the selected language pair.
 
 ## Screenshots
