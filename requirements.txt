@@ -1,12 +1,12 @@
 PyQt6>=6.4.0
-PyQt6-WebEngine>=6.4.0
-fastapi>=0.110.0
-uvicorn>=0.27.0
 pytesseract>=0.3.10
 opencv-python>=4.7.0
-easyocr>=1.6.0
+numpy>=1.24.0
+mss>=6.1.0
 argostranslate>=1.9.0
 deep-translator>=1.11.0
-mss>=6.1.0
 langdetect>=1.0.9
-numpy>=1.24.0
+pynput>=1.7.6
+# Optional:
+#   easyocr>=1.6.0   second OCR engine used when tesseract finds nothing (large, pulls in torch)
+#   pyobjc-framework-Cocoa   hides the overlay from screenshots on macOS (avoids a small flicker)

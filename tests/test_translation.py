@@ -3,7 +3,22 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from src.translation.translator import ArgosOfflineTranslator
+from src.translation.translator import (
+    ArgosOfflineTranslator,
+    BaseTranslator,
+    CachedTranslator,
+    GoogleFreeFallbackTranslator,
+    HybridTranslator,
+)
+
+
+class CountingTranslator(BaseTranslator):
+    def __init__(self):
+        self.calls = []
+
+    def translate(self, text, source_lang, target_lang):
+        self.calls.append(text)
+        return text.upper()
 
 
 class TranslationTests(unittest.TestCase):
@@ -37,6 +52,33 @@ class TranslationTests(unittest.TestCase):
             result = translator.translate("Good morning", "en", "es")
 
         self.assertEqual("Buenos días", result)
+
+    def test_same_language_is_returned_unchanged(self):
+        translator = ArgosOfflineTranslator()
+        self.assertEqual("Hello", translator.translate("Hello", "en", "en"))
+
+    def test_cache_avoids_repeat_calls(self):
+        inner = CountingTranslator()
+        cached = CachedTranslator(inner)
+        self.assertEqual(["A", "B"], cached.translate_batch(["a", "b"], "en", "id"))
+        self.assertEqual(["A", "C"], cached.translate_batch(["a", "c"], "en", "id"))
+        self.assertEqual(["a", "b", "c"], inner.calls)
+
+    def test_hybrid_falls_back(self):
+        class Broken(BaseTranslator):
+            def translate(self, text, source_lang, target_lang):
+                raise RuntimeError("no model")
+
+        hybrid = HybridTranslator(Broken(), CountingTranslator())
+        self.assertEqual(["HI"], hybrid.translate_batch(["hi"], "en", "id"))
+
+    def test_google_batch_splits_lines(self):
+        google = GoogleFreeFallbackTranslator(sleep_seconds=0)
+        with patch.object(
+            GoogleFreeFallbackTranslator, "translate", return_value="satu\ndua"
+        ) as mocked:
+            self.assertEqual(["satu", "dua"], google.translate_batch(["one", "two"], "en", "id"))
+        mocked.assert_called_once()
 
 
 if __name__ == "__main__":
