@@ -80,6 +80,13 @@
             android:layout_height="wrap_content"
             android:text="Download language now (works offline afterwards)" />
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/textButton"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Show last translated text (copy)" />
+
         <TextView
             android:id="@+id/statusText"
             android:layout_width="match_parent"
@@ -91,7 +98,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="20dp"
-            android:text="Tips\n• The first time you turn it on, Android asks to record or cast the screen. Choose “Entire screen”.\n• You can also add the “Screen translate” tile to Quick Settings.\n• Translations are see-through for touches: tap buttons under them as usual.\n• Long-press the bubble: translate once, swap languages, hide, close."
+            android:text="Tips\n• The first time you turn it on, Android asks to record or cast the screen. Choose “Entire screen”.\n• You can also add the “Screen translate” tile to Quick Settings.\n• Translations are see-through for touches: tap buttons under them as usual.\n• Long-press the bubble: translate once, translate just an area, show the text to copy it, swap languages, close."
             android:textSize="13sp" />
     </LinearLayout>
 </ScrollView>

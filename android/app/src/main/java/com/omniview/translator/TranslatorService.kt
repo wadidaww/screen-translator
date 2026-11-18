@@ -45,6 +45,10 @@ object TranslatorState {
 
     @Volatile
     var active = false
+
+    /** What was last painted on screen, for the "Show text" panel. */
+    @Volatile
+    var lastItems: List<TextItem> = emptyList()
 }
 
 /**
@@ -62,6 +66,7 @@ class TranslatorService : Service() {
     private lateinit var bubble: FloatingBubble
     private lateinit var menu: SmartMenu
     private lateinit var overlay: TranslationOverlayView
+    private lateinit var areaSelector: AreaSelector
     private val engine = OcrTranslator()
 
     private var projection: MediaProjection? = null
@@ -70,6 +75,10 @@ class TranslatorService : Service() {
     private var overlayAttached = false
     private var liveMode = true
     private var pendingStartLive: Boolean? = null
+    private var pendingArea: Rect? = null
+
+    /** When set, only this part of the screen (screen pixels) is read and watched. */
+    private var area: Rect? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -79,6 +88,7 @@ class TranslatorService : Service() {
         prefs = Prefs(this)
         overlay = TranslationOverlayView(this)
         menu = SmartMenu(this, windowManager)
+        areaSelector = AreaSelector(this, windowManager)
         bubble = FloatingBubble(this, windowManager, prefs, ::toggle, ::openMenu)
         engine.onDownloading = { downloading ->
             scope.launch {
@@ -103,6 +113,7 @@ class TranslatorService : Service() {
         when (intent?.action) {
             ACTION_TOGGLE -> toggle()
             ACTION_TRANSLATE_ONCE -> activate(live = false)
+            ACTION_TRANSLATE_AREA -> pickArea()
             ACTION_STOP -> stopSelf()
             ACTION_PROJECTION_RESULT -> onProjectionResult(intent)
             ACTION_SETTINGS_CHANGED -> if (TranslatorState.active) restartLoop()
@@ -115,16 +126,18 @@ class TranslatorService : Service() {
         if (TranslatorState.active) deactivate() else activate(live = true)
     }
 
-    private fun activate(live: Boolean) {
+    private fun activate(live: Boolean, area: Rect? = null) {
         menu.dismiss()
         if (projection == null) {
             pendingStartLive = live
+            pendingArea = area
             val intent = Intent(this, ProjectionPermissionActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
             return
         }
         liveMode = live
+        this.area = area
         TranslatorState.active = true
         bubble.setActive(true)
         attachOverlay()
@@ -138,6 +151,7 @@ class TranslatorService : Service() {
         loopJob?.cancel()
         loopJob = null
         TranslatorState.active = false
+        area = null
         overlay.clear()
         bubble.setActive(false)
         bubble.setBusy(false)
@@ -154,7 +168,9 @@ class TranslatorService : Service() {
             intent.getParcelableExtra(EXTRA_RESULT_DATA)
         }
         val live = pendingStartLive ?: true
+        val requestedArea = pendingArea
         pendingStartLive = null
+        pendingArea = null
         if (resultCode == 0 || data == null) {
             toast("Screen capture permission is needed to translate")
             return
@@ -180,7 +196,31 @@ class TranslatorService : Service() {
         projection = mp
         val (w, h) = screenSize()
         capturer = ScreenCapturer(mp, w, h, resources.displayMetrics.densityDpi).also { it.start() }
-        activate(live)
+        activate(live, requestedArea)
+    }
+
+    /** Lets the user drag a box over the screen, then translates just that part once. */
+    private fun pickArea() {
+        menu.dismiss()
+        deactivate()
+        areaSelector.show { rect ->
+            if (rect != null) {
+                // Give the dimmed selection layer a moment to disappear from the mirror.
+                scope.launch {
+                    delay(300)
+                    activate(live = false, area = rect)
+                }
+            }
+        }
+    }
+
+    private fun showTextPanel() {
+        menu.dismiss()
+        // The panel covers the screen, so stop watching it (the last results are kept).
+        if (TranslatorState.active) deactivate()
+        startActivity(
+            Intent(this, TextPanelActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }
 
     private fun onProjectionStopped() {
@@ -213,7 +253,7 @@ class TranslatorService : Service() {
         var translatedOnce = false
 
         while (scope.isActive && TranslatorState.active) {
-            if (menu.isShowing) {
+            if (menu.isShowing || areaSelector.isShowing) {
                 delay(300)
                 continue
             }
@@ -232,7 +272,7 @@ class TranslatorService : Service() {
                     lastPeek = now
                     val peek = cleanFrame(cap)
                     changed = peek == null || withContext(Dispatchers.Default) {
-                        FrameTools.changed(clean, FrameTools.signature(peek, bubbleMask()))
+                        FrameTools.changed(clean, FrameTools.signature(peek, ignored()))
                     }
                     if (!changed) overlay.show(shown)
                 }
@@ -259,7 +299,7 @@ class TranslatorService : Service() {
             }
 
             val signature = withContext(Dispatchers.Default) {
-                FrameTools.signature(frame, bubbleMask())
+                FrameTools.signature(frame, ignored())
             }
             if (baseline != null && !FrameTools.changed(baseline, signature)) {
                 delay(INTERVAL_MS)
@@ -288,6 +328,7 @@ class TranslatorService : Service() {
             unstableSince = 0L
             if (!TranslatorState.active) return
             if (items.isNotEmpty()) {
+                TranslatorState.lastItems = items
                 overlay.show(items)
                 shown = items
                 clean = signature
@@ -310,7 +351,21 @@ class TranslatorService : Service() {
         frame: Bitmap, source: String, target: String, script: Script,
     ): List<TextItem> {
         val bubbleRect = bubble.screenRect()
-        val found = engine.recognize(frame, script).filter { item ->
+        val crop = area?.let { Rect(it) }?.takeIf { it.intersect(0, 0, frame.width, frame.height) }
+        val input = if (crop != null) {
+            withContext(Dispatchers.Default) {
+                Bitmap.createBitmap(frame, crop.left, crop.top, crop.width(), crop.height())
+            }
+        } else {
+            frame
+        }
+        val recognized = try {
+            engine.recognize(input, script)
+        } finally {
+            if (input !== frame) input.recycle()
+        }
+        if (crop != null) recognized.forEach { it.box.offset(crop.left, crop.top) }
+        val found = recognized.filter { item ->
             bubbleRect == null || !Rect.intersects(bubbleRect, item.box)
         }
         if (found.isEmpty()) return emptyList()
@@ -332,10 +387,24 @@ class TranslatorService : Service() {
         return withContext(Dispatchers.Default) { cap.awaitFrameAfter(before) }
     }
 
-    private fun bubbleMask(): List<Rect> = listOfNotNull(bubble.screenRect())
+    /** Parts of the screen that change detection must not look at. */
+    private fun ignored(): List<Rect> = listOfNotNull(bubble.screenRect()) + outsideArea()
+
+    /** Four rectangles covering everything around [area], so changes there are ignored. */
+    private fun outsideArea(): List<Rect> {
+        val a = area ?: return emptyList()
+        val (w, h) = screenSize()
+        val big = maxOf(w, h) * 2
+        return listOf(
+            Rect(-big, -big, big, a.top),
+            Rect(-big, a.bottom, big, big),
+            Rect(-big, a.top, a.left, a.bottom),
+            Rect(a.right, a.top, big, a.bottom),
+        )
+    }
 
     private fun masks(items: List<TextItem>): List<Rect> =
-        items.map { Rect(it.box) } + bubbleMask()
+        items.map { Rect(it.box) } + ignored()
 
     // ------------------------------------------------------------------ windows
     private fun attachOverlay() {
@@ -382,6 +451,8 @@ class TranslatorService : Service() {
                 deactivate()
                 activate(live = false)
             },
+            SmartMenu.Item("▣  Translate an area…") { pickArea() },
+            SmartMenu.Item("☰  Show text / copy") { showTextPanel() },
             SmartMenu.Item("⇄  Swap languages") { swapLanguages() },
             SmartMenu.Item("🌐  To: ${Languages.displayName(prefs.targetLang)}…") { openSettings() },
             SmartMenu.Item("✕  Close bubble") { stopSelf() },
@@ -480,7 +551,12 @@ class TranslatorService : Service() {
         super.onConfigurationChanged(newConfig)
         val (w, h) = screenSize()
         capturer?.resize(w, h)
-        if (TranslatorState.active) restartLoop()
+        bubble.keepOnScreen()
+        areaSelector.dismiss()
+        if (TranslatorState.active) {
+            area = null // the selected box no longer matches the rotated screen
+            restartLoop()
+        }
     }
 
     private fun toast(message: String) {
@@ -492,6 +568,7 @@ class TranslatorService : Service() {
         TranslatorState.serviceRunning = false
         loopJob?.cancel()
         menu.dismiss()
+        areaSelector.dismiss()
         bubble.hide()
         detachOverlay()
         capturer?.release()
@@ -515,6 +592,7 @@ class TranslatorService : Service() {
         const val ACTION_SHOW = "com.omniview.translator.SHOW"
         const val ACTION_TOGGLE = "com.omniview.translator.TOGGLE"
         const val ACTION_TRANSLATE_ONCE = "com.omniview.translator.ONCE"
+        const val ACTION_TRANSLATE_AREA = "com.omniview.translator.AREA"
         const val ACTION_STOP = "com.omniview.translator.STOP"
         const val ACTION_SETTINGS_CHANGED = "com.omniview.translator.SETTINGS_CHANGED"
         const val ACTION_PROJECTION_RESULT = "com.omniview.translator.PROJECTION_RESULT"

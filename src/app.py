@@ -20,6 +20,7 @@ from src.ui.floating_button import FloatingButton, paint_translate_icon
 from src.ui.main_window import MainWindow
 from src.ui.overlay_window import OverlayItem, OverlayWindow
 from src.ui.region_selector import RegionSelector
+from src.ui.text_panel import TextPanel
 
 LOGGER = logging.getLogger(__name__)
 LogicalRect = Tuple[int, int, int, int]
@@ -48,7 +49,8 @@ def setup_logging() -> None:
     root.handlers.clear()
     root.addHandler(activity_handler)
     root.addHandler(error_handler)
-    root.addHandler(console)
+    if sys.stderr is not None:  # windowed builds have no console
+        root.addHandler(console)
 
 
 def make_icon(active: bool) -> QIcon:
@@ -174,6 +176,8 @@ class OmniViewApp:
         self.settings_window.settings_saved.connect(self.apply_settings)
         self.worker: Optional[TranslationWorker] = None
         self.selector: Optional[RegionSelector] = None
+        self.text_panel: Optional[TextPanel] = None
+        self.last_blocks: List[TextBlock] = []
 
         self.menu = self._create_menu()
         self.tray = QSystemTrayIcon(make_icon(False))
@@ -210,6 +214,8 @@ class OmniViewApp:
         self.region_action.triggered.connect(self.select_region)
         self.fullscreen_action = QAction("Use whole screen", menu)
         self.fullscreen_action.triggered.connect(self.use_full_screen)
+        self.text_action = QAction("Show translated text...", menu)
+        self.text_action.triggered.connect(self.show_text_panel)
         self.button_action = QAction("Show floating button", menu, checkable=True)
         self.button_action.setChecked(bool(self.config.get("show_floating_button", True)))
         self.button_action.toggled.connect(self._set_floating_visible)
@@ -217,7 +223,7 @@ class OmniViewApp:
         self.settings_action.triggered.connect(self.show_settings)
         self.exit_action = QAction("Exit", menu)
         self.exit_action.triggered.connect(self.exit_app)
-        for action in (self.toggle_action, self.once_action):
+        for action in (self.toggle_action, self.once_action, self.text_action):
             menu.addAction(action)
         menu.addSeparator()
         for action in (
@@ -256,6 +262,14 @@ class OmniViewApp:
             self.tray.showMessage("OmniView Translator", message)
         else:
             QMessageBox.information(None, "OmniView Translator", message)
+
+    def show_text_panel(self) -> None:
+        if self.text_panel is None:
+            self.text_panel = TextPanel()
+        self.text_panel.set_blocks(self.last_blocks)
+        self.text_panel.show()
+        self.text_panel.raise_()
+        self.text_panel.activateWindow()
 
     def show_settings(self) -> None:
         self.settings_window.show()
@@ -361,6 +375,9 @@ class OmniViewApp:
         if not self.is_running():
             return
         scale = scale or 1.0
+        self.last_blocks = list(blocks)
+        if self.text_panel is not None and self.text_panel.isVisible():
+            self.text_panel.set_blocks(self.last_blocks)
         items = []
         for block in blocks:
             x, y, w, h = block.box
@@ -387,7 +404,35 @@ class OmniViewApp:
         return self.qt_app.exec()
 
 
+def _report(message: str) -> None:
+    # Windowed (no console) builds have no stdout; log to the activity log as well.
+    LOGGER.info(message)
+    if sys.stdout is not None:
+        print(message)
+
+
+def self_test() -> int:
+    """Headless check used by the packaged build: can we load everything and read text?"""
+    import cv2
+    import numpy as np
+
+    from src.translation.translator import TranslatorFactory
+
+    TranslatorFactory(engine="hybrid").create()
+    if not OCREngine.tesseract_available():
+        _report("self-test: tesseract not found")
+        return 2
+    image = np.full((120, 640, 3), 255, dtype=np.uint8)
+    cv2.putText(image, "HELLO WORLD", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0), 4)
+    text = " ".join(block.text for block in OCREngine(source_lang="en").extract_blocks(image))
+    _report(f"self-test: OCR read {text!r}")
+    return 0 if "HELLO" in text.upper() else 3
+
+
 def main() -> int:
+    if "--self-test" in sys.argv:
+        setup_logging()
+        return self_test()
     app = OmniViewApp()
     return app.run()
 

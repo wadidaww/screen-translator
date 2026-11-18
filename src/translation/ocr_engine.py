@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -27,6 +28,22 @@ MIN_ALPHA_RATIO = 0.2
 ALPHA_PATTERN = r"[A-Za-z\u00C0-\u024F\u0400-\u04FF\u0600-\u06FF\u0900-\u097F\u0E00-\u0E7F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]"
 CJK_PATTERN = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]")
 WINDOWS_TESSERACT = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+
+def bundled_tesseract() -> Optional[str]:
+    """Tesseract shipped next to the packaged app (the Windows build puts it in ./tesseract)."""
+    roots = []
+    if getattr(sys, "frozen", False):
+        roots.append(os.path.dirname(sys.executable))
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            roots.append(meipass)
+    exe = "tesseract.exe" if sys.platform.startswith("win") else "tesseract"
+    for root in roots:
+        candidate = os.path.join(root, "tesseract", exe)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
 
 
 @dataclass
@@ -72,7 +89,7 @@ class OCREngine:
     def _configure_tesseract(tesseract_cmd: Optional[str]) -> None:
         if pytesseract is None:
             return
-        cmd = tesseract_cmd or os.environ.get("TESSERACT_CMD")
+        cmd = tesseract_cmd or os.environ.get("TESSERACT_CMD") or bundled_tesseract()
         if not cmd and not shutil.which("tesseract") and os.path.exists(WINDOWS_TESSERACT):
             cmd = WINDOWS_TESSERACT
         if cmd:
@@ -82,6 +99,9 @@ class OCREngine:
     def tesseract_available() -> bool:
         if pytesseract is None:
             return False
+        if pytesseract.pytesseract.tesseract_cmd == "tesseract":
+            # Not configured yet: look for TESSERACT_CMD, a bundled copy or the Windows default.
+            OCREngine._configure_tesseract(None)
         try:
             pytesseract.get_tesseract_version()
             return True

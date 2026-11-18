@@ -9,6 +9,7 @@ from src.translation.translator import (
     CachedTranslator,
     GoogleFreeFallbackTranslator,
     HybridTranslator,
+    TranslatorFactory,
 )
 
 
@@ -79,6 +80,18 @@ class TranslationTests(unittest.TestCase):
         ) as mocked:
             self.assertEqual(["satu", "dua"], google.translate_batch(["one", "two"], "en", "id"))
         mocked.assert_called_once()
+
+
+class FactoryWithoutArgosTests(unittest.TestCase):
+    def test_hybrid_uses_google_when_argos_missing(self):
+        with patch("src.translation.translator.argos_translate", None):
+            translator = TranslatorFactory(engine="hybrid").create()
+        self.assertIsInstance(translator.inner, GoogleFreeFallbackTranslator)
+
+    def test_hybrid_kept_when_argos_present(self):
+        with patch("src.translation.translator.argos_translate", object()):
+            translator = TranslatorFactory(engine="hybrid").create()
+        self.assertIsInstance(translator.inner, HybridTranslator)
 
 
 if __name__ == "__main__":
