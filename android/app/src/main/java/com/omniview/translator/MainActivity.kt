@@ -36,15 +36,20 @@ class MainActivity : AppCompatActivity() {
         val scriptLabel = findViewById<View>(R.id.scriptLabel)
 
         bind(sourceSpinner, Languages.sources, Languages.sources.indexOfFirst { it.code == prefs.sourceLang }) {
-            prefs.sourceLang = it.code
             val auto = it.code == Prefs.AUTO
             scriptSpinner.visibility = if (auto) View.VISIBLE else View.GONE
             scriptLabel.visibility = scriptSpinner.visibility
-            settingsChanged()
+            // Spinners report their initial selection too: only restart on a real change.
+            if (prefs.sourceLang != it.code) {
+                prefs.sourceLang = it.code
+                settingsChanged()
+            }
         }
         bind(targetSpinner, Languages.all, Languages.all.indexOfFirst { it.code == prefs.targetLang }) {
-            prefs.targetLang = it.code
-            settingsChanged()
+            if (prefs.targetLang != it.code) {
+                prefs.targetLang = it.code
+                settingsChanged()
+            }
         }
         val scripts = Script.entries.toList()
         val scriptAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
@@ -52,8 +57,10 @@ class MainActivity : AppCompatActivity() {
         scriptSpinner.adapter = scriptAdapter
         scriptSpinner.setSelection(scripts.indexOf(prefs.autoScript))
         scriptSpinner.onItemSelectedListener = listener { position ->
-            prefs.autoScript = scripts[position]
-            settingsChanged()
+            if (prefs.autoScript != scripts[position]) {
+                prefs.autoScript = scripts[position]
+                settingsChanged()
+            }
         }
 
         overlayButton.setOnClickListener {
@@ -67,6 +74,9 @@ class MainActivity : AppCompatActivity() {
             refresh()
         }
         findViewById<Button>(R.id.downloadButton).setOnClickListener { downloadModel() }
+        findViewById<Button>(R.id.textButton).setOnClickListener {
+            startActivity(Intent(this, TextPanelActivity::class.java))
+        }
 
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=

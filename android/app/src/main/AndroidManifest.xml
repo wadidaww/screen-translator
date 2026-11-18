@@ -27,6 +27,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Read and copy the last translated text. -->
+        <activity
+            android:name=".TextPanelActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:label="Translated text"
+            android:launchMode="singleTask"
+            android:taskAffinity="" />
+
         <!-- Invisible activity that only shows the system "start recording/casting?" dialog. -->
         <activity
             android:name=".ProjectionPermissionActivity"

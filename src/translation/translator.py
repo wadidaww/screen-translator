@@ -178,6 +178,13 @@ class TranslatorFactory:
 
     def create(self) -> BaseTranslator:
         engine = self.engine or ("hybrid" if self.use_online_fallback else "offline")
+        if engine == "hybrid" and argos_translate is None:
+            # Argos is not installed (e.g. the packaged Windows app): skip straight to Google
+            # instead of failing on every paragraph first.
+            LOGGER.info("Argos Translate is not installed; using online translation")
+            engine = "online"
+        elif engine == "offline" and argos_translate is None:
+            LOGGER.warning("Offline translation needs Argos Translate (pip install argostranslate)")
         if engine == "online":
             inner: BaseTranslator = GoogleFreeFallbackTranslator()
         elif engine == "hybrid":

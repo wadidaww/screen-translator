@@ -30,8 +30,10 @@ No API keys or accounts are needed.
    record/cast your screen: choose **Entire screen** and **Start**.
 5. **Tap the bubble again** to stop. It turns blue while active, grey when off.
 
-Long-press the bubble for the **smart menu**: live translate on/off, translate once, swap languages,
-change the target language, close the bubble. You can also add the **Screen translate** tile to
+Long-press the bubble for the **smart menu**: live translate on/off, translate once,
+**translate an area** (drag a box around just the text you want, e.g. a game's dialog box),
+**show text / copy** (read the last translation in a list; tap an entry to copy the translation,
+long-press to copy the original), swap languages, change the target language, close the bubble. You can also add the **Screen translate** tile to
 Quick Settings, or use the buttons in the notification.
 
 Tips:
@@ -49,7 +51,13 @@ Open `android/` in Android Studio, or run `./gradlew assembleRelease` inside `an
 
 ## Desktop
 
-### Install
+### Install (Windows, ready to run)
+Download `OmniViewTranslator-windows.zip` from the
+[`desktop-latest` release](../../releases/tag/desktop-latest), unzip it and run
+`OmniViewTranslator.exe`. Tesseract OCR and 21 language packs are included. This build translates
+online (Google); run from source (below) for offline Argos translation.
+
+### Install (from source, any OS)
 1. Install Python 3.10+.
 2. Install Tesseract 5:
    - **Windows:** the [UB Mannheim installer](https://github.com/UB-Mannheim/tesseract/wiki). It is
@@ -66,6 +74,8 @@ Open `android/` in Android Studio, or run `./gradlew assembleRelease` inside `an
   icon) to start/stop live translation of the whole screen. Right-click it for the menu.
 - **Select area…** limits translation to part of the screen (faster, recommended for games/videos).
 - **Translate once** translates the current screen and clears when the screen changes.
+- **Show translated text…** lists what is on screen right now, original and translation, so you can
+  read it comfortably and copy it (click = copy translation, double-click = copy original).
 - Hotkeys (configurable in Settings): `Ctrl+Shift+T` start/stop, `Ctrl+Shift+O` translate once,
   `Ctrl+Shift+R` select area. Global hotkeys need `pynput` and do not work on Wayland.
 - **Settings**: languages, translator (offline first with online fallback / offline only / online only),

@@ -86,6 +86,19 @@ class FloatingBubble(
         return Rect(loc[0], loc[1], loc[0] + size, loc[1] + size)
     }
 
+    /** After rotation or a resolution change, move the bubble back inside the screen. */
+    fun keepOnScreen() {
+        if (!attached) return
+        val margin = (8 * density).toInt()
+        val metrics = context.resources.displayMetrics
+        val wasRight = params.x > margin
+        params.x = if (wasRight) metrics.widthPixels - size - margin else margin
+        params.y = params.y.coerceIn(0, (metrics.heightPixels - size).coerceAtLeast(0))
+        windowManager.updateViewLayout(root, params)
+        prefs.bubbleX = params.x
+        prefs.bubbleY = params.y
+    }
+
     val anchorX: Int get() = params.x
     val anchorY: Int get() = params.y
 
