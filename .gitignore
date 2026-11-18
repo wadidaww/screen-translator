@@ -2,3 +2,11 @@ __pycache__/
 *.pyc
 logs/
 .ruff_cache/
+settings.json
+build/
+dist/
+*.egg-info/
+android/.gradle/
+android/app/build/
+android/local.properties
+.idea/
