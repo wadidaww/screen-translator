@@ -1,218 +1,389 @@
-import hashlib
+"""OmniView Translator desktop app: tray icon, floating button, hotkeys and overlay."""
+
 import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
+from typing import List, Optional, Tuple
 
-from PyQt6.QtCore import QPoint, QRect, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QGuiApplication, QIcon, QPainter, QPen
-from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
+from PyQt6.QtCore import QMetaObject, QObject, QRect, QRectF, Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPainter, QPixmap
+from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
-from src.core.config_manager import ConfigManager
-from src.core.screen_capture import RegionCapture
-from src.translation.ocr_engine import OCREngine
+from src.core.config_manager import ConfigManager, default_config_dir
+from src.core.hotkeys import GlobalHotkeys
+from src.core.pipeline import LiveLoop, TranslationPipeline
+from src.core.screen_capture import ScreenGrabber
+from src.translation.ocr_engine import OCREngine, TextBlock
 from src.translation.translator import TranslatorFactory
+from src.ui.floating_button import FloatingButton, paint_translate_icon
 from src.ui.main_window import MainWindow
-from src.ui.overlay_window import OverlayWindow
+from src.ui.overlay_window import OverlayItem, OverlayWindow
+from src.ui.region_selector import RegionSelector
 
-try:
-    from langdetect import detect
-except ImportError:  # pragma: no cover
-    detect = None
+LOGGER = logging.getLogger(__name__)
+LogicalRect = Tuple[int, int, int, int]
 
 
 def setup_logging() -> None:
     log_max_bytes = 2_000_000
-    os.makedirs("logs", exist_ok=True)
+    log_dir = default_config_dir() / "logs"
+    os.makedirs(log_dir, exist_ok=True)
     formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     activity_handler = RotatingFileHandler(
-        "logs/activity.log", maxBytes=log_max_bytes, backupCount=3
+        log_dir / "activity.log", maxBytes=log_max_bytes, backupCount=3, encoding="utf-8"
     )
     activity_handler.setFormatter(formatter)
-
-    error_handler = RotatingFileHandler("logs/error.log", maxBytes=log_max_bytes, backupCount=3)
+    error_handler = RotatingFileHandler(
+        log_dir / "error.log", maxBytes=log_max_bytes, backupCount=3, encoding="utf-8"
+    )
     error_handler.setLevel(logging.WARNING)
     error_handler.setFormatter(formatter)
+    console = logging.StreamHandler()
+    console.setFormatter(formatter)
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     root.handlers.clear()
     root.addHandler(activity_handler)
     root.addHandler(error_handler)
+    root.addHandler(console)
 
 
-class RegionSelector(QWidget):
-    region_selected = pyqtSignal(tuple)
+def make_icon(active: bool) -> QIcon:
+    pixmap = QPixmap(64, 64)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    paint_translate_icon(painter, QRectF(0, 0, 64, 64), active)
+    painter.end()
+    return QIcon(pixmap)
 
-    def __init__(self):
-        super().__init__()
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
-        self.setWindowState(Qt.WindowState.WindowFullScreen)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.origin: QPoint | None = None
-        self.current: QPoint | None = None
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.origin = event.position().toPoint()
-            self.current = self.origin
-            self.update()
-
-    def mouseMoveEvent(self, event):
-        self.current = event.position().toPoint()
-        if self.origin and self.current:
-            rect = QRect(self.origin, self.current).normalized()
-            QGuiApplication.setOverrideCursor(Qt.CursorShape.CrossCursor)
-            self.setToolTip(f"x:{rect.x()} y:{rect.y()} w:{rect.width()} h:{rect.height()}")
-            self.setToolTipDuration(1000)
-            self.setToolTip(self.toolTip())
-        self.update()
-
-    def mouseReleaseEvent(self, event):
-        if self.origin and self.current:
-            rect = QRect(self.origin, self.current).normalized()
-            self.region_selected.emit((rect.x(), rect.y(), rect.width(), rect.height()))
-        self.close()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setOpacity(0.3)
-        painter.fillRect(self.rect(), Qt.GlobalColor.black)
-        painter.setOpacity(1.0)
-        if self.origin and self.current:
-            rect = QRect(self.origin, self.current).normalized()
-            painter.setPen(QPen(Qt.GlobalColor.cyan, 2))
-            painter.drawRect(rect)
+def physical_bbox(rect: LogicalRect) -> Tuple[int, int, int, int]:
+    """Convert a logical (Qt) rectangle to the physical pixels mss expects."""
+    x, y, w, h = rect
+    if sys.platform == "darwin":  # mss works in points on macOS
+        return x, y, w, h
+    screen = QGuiApplication.screenAt(QRect(x, y, w, h).center()) or QGuiApplication.primaryScreen()
+    dpr = screen.devicePixelRatio()
+    origin = screen.geometry().topLeft()
+    px = origin.x() + round((x - origin.x()) * dpr)
+    py = origin.y() + round((y - origin.y()) * dpr)
+    return px, py, max(1, round(w * dpr)), max(1, round(h * dpr))
 
 
 class TranslationWorker(QThread):
-    translated = pyqtSignal(str)
+    """Runs the LiveLoop on a background thread and talks to the overlay via signals."""
 
-    def __init__(self, config: ConfigManager):
+    blocks_ready = pyqtSignal(list, float)  # blocks, frame->logical scale
+    status = pyqtSignal(str)
+    busy = pyqtSignal(bool)
+
+    def __init__(
+        self, config: ConfigManager, region: LogicalRect, overlay: OverlayWindow, live: bool = True
+    ):
         super().__init__()
         self.config = config
-        region = self.config.get("region")
-        self.capture = RegionCapture((region["x"], region["y"], region["width"], region["height"]))
-        self.ocr = OCREngine()
-        self.translator = TranslatorFactory(
-            use_online_fallback=bool(self.config.get("use_online_fallback", False))
-        ).create()
-        self._running = False
-        self._last_hash = ""
+        self.region = region
+        self.overlay = overlay
+        self.live = live
+        self.loop: Optional[LiveLoop] = None
+        self._scale = 1.0
+        self.bbox = physical_bbox(region)
 
-    def stop(self):
-        self._running = False
-        self.capture.stop()
+    def _clear_overlay(self) -> None:
+        QMetaObject.invokeMethod(
+            self.overlay, "clear_now", Qt.ConnectionType.BlockingQueuedConnection
+        )
+        if not self.overlay.excluded_from_capture:
+            self.msleep(80)  # let the compositor drop the old frame
 
-    def _looks_like_noise(self, text: str) -> bool:
-        return self.ocr.is_noise(text)
+    def stop(self) -> None:
+        if self.loop:
+            self.loop.stop()
 
-    def run(self):
-        self._running = True
-        self.capture.start()
-        while self._running:
-            frame = self.capture.grab_frame()
-            if frame is None:
-                self.msleep(40)
-                continue
+    def run(self) -> None:
+        source = self.config.get("source_lang", "auto")
+        target = self.config.get("target_lang", "en")
+        engine = self.config.get("translator_engine") or (
+            "hybrid" if self.config.get("use_online_fallback") else "offline"
+        )
+        ocr = OCREngine(source_lang=source, tesseract_cmd=self.config.get("tesseract_cmd") or None)
+        if not OCREngine.tesseract_available():
+            self.status.emit(
+                "Tesseract OCR was not found. Install it and/or set its path in Settings."
+            )
+            return
+        translator = TranslatorFactory(engine=engine).create()
+        pipeline = TranslationPipeline(ocr, translator, source, target)
+        pipeline.online_auto = engine == "online"
 
-            result = self.ocr.extract_text(frame)
-            text = result["text"].strip()
-            del frame
+        grabber = ScreenGrabber()
+        bbox = self.bbox
 
-            if not text or self._looks_like_noise(text):
-                self.msleep(40)
-                continue
+        def grab():
+            frame = grabber.grab(bbox)
+            self._scale = frame.shape[1] / max(1, self.region[2])
+            return frame
 
-            text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-            if text_hash == self._last_hash:
-                self.msleep(40)
-                continue
-            self._last_hash = text_hash
+        def show(blocks: List[TextBlock]) -> None:
+            self.blocks_ready.emit(blocks, self._scale)
 
-            source = self.config.get("source_lang", "auto")
-            target = self.config.get("target_lang", "en")
-            if source == "auto" and detect is not None:
-                try:
-                    source = detect(text)
-                except Exception:
-                    source = "en"
+        self.loop = LiveLoop(
+            grab=grab,
+            pipeline=pipeline,
+            show=show,
+            clear=self._clear_overlay,
+            overlay_excluded=lambda: self.overlay.excluded_from_capture,
+            live=self.live,
+            interval=int(self.config.get("refresh_interval_ms", 600)) / 1000.0,
+            peek_interval=int(self.config.get("peek_interval_ms", 2500)) / 1000.0,
+            sleep=lambda s: self.msleep(int(s * 1000)),
+            on_busy=self.busy.emit,
+        )
+        try:
+            self.loop.run()
+        finally:
+            grabber.close()
 
-            try:
-                translated = self.translator.translate(text, source, target)
-            except Exception:
-                logging.getLogger(__name__).exception("Translation failed")
-                translated = text
-            self.translated.emit(translated)
-            self.msleep(40)
+
+class HotkeyBridge(QObject):
+    """Moves pynput callbacks (background thread) onto the Qt thread."""
+
+    toggle = pyqtSignal()
+    once = pyqtSignal()
+    region = pyqtSignal()
 
 
 class OmniViewApp:
     def __init__(self):
         setup_logging()
+        QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
         self.qt_app = QApplication(sys.argv)
+        self.qt_app.setQuitOnLastWindowClosed(False)
+        self.qt_app.setApplicationName("OmniView Translator")
         self.config = ConfigManager()
-        self.overlay = OverlayWindow(opacity=float(self.config.get("overlay_opacity", 0.85)))
+        self.overlay = OverlayWindow(
+            opacity=float(self.config.get("overlay_opacity", 1.0)),
+            font_size=int(self.config.get("font_size", 0)),
+        )
         self.settings_window = MainWindow(self.config)
-        self.worker: TranslationWorker | None = None
-        self.selector: RegionSelector | None = None
-        self.tray = self._create_tray()
+        self.settings_window.settings_saved.connect(self.apply_settings)
+        self.worker: Optional[TranslationWorker] = None
+        self.selector: Optional[RegionSelector] = None
 
-    def _create_tray(self) -> QSystemTrayIcon:
-        tray = QSystemTrayIcon(QIcon())
+        self.menu = self._create_menu()
+        self.tray = QSystemTrayIcon(make_icon(False))
+        self.tray.setToolTip("OmniView Translator")
+        self.tray.setContextMenu(self.menu)
+        self.tray.activated.connect(self._on_tray_activated)
+        self.tray.show()
+
+        self.floating = FloatingButton(self.menu)
+        self.floating.toggled.connect(self.toggle_translation)
+        screen = QGuiApplication.primaryScreen().availableGeometry()
+        self.floating.move(screen.right() - 80, screen.top() + screen.height() // 3)
+        if self.config.get("show_floating_button", True):
+            self.floating.show()
+
+        self.bridge = HotkeyBridge()
+        self.bridge.toggle.connect(self.toggle_translation)
+        self.bridge.once.connect(self.translate_once)
+        self.bridge.region.connect(self.select_region)
+        self.hotkeys = GlobalHotkeys()
+        self._register_hotkeys()
+
+        if not OCREngine.tesseract_available():
+            self.notify("Tesseract OCR was not found. See README for install steps.")
+
+    # ------------------------------------------------------------- menu/tray
+    def _create_menu(self) -> QMenu:
         menu = QMenu()
-
-        select_action = QAction("Select Region")
-        select_action.triggered.connect(self.select_region)
-        start_action = QAction("Start Translation")
-        start_action.triggered.connect(self.start_translation)
-        stop_action = QAction("Stop")
-        stop_action.triggered.connect(self.stop_translation)
-        settings_action = QAction("Settings")
-        settings_action.triggered.connect(self.settings_window.show)
-        exit_action = QAction("Exit")
-        exit_action.triggered.connect(self.exit_app)
-
-        menu.addAction(select_action)
-        menu.addAction(start_action)
-        menu.addAction(stop_action)
-        menu.addAction(settings_action)
+        self.toggle_action = QAction("Start translating", menu)
+        self.toggle_action.triggered.connect(self.toggle_translation)
+        self.once_action = QAction("Translate once", menu)
+        self.once_action.triggered.connect(self.translate_once)
+        self.region_action = QAction("Select area...", menu)
+        self.region_action.triggered.connect(self.select_region)
+        self.fullscreen_action = QAction("Use whole screen", menu)
+        self.fullscreen_action.triggered.connect(self.use_full_screen)
+        self.button_action = QAction("Show floating button", menu, checkable=True)
+        self.button_action.setChecked(bool(self.config.get("show_floating_button", True)))
+        self.button_action.toggled.connect(self._set_floating_visible)
+        self.settings_action = QAction("Settings...", menu)
+        self.settings_action.triggered.connect(self.show_settings)
+        self.exit_action = QAction("Exit", menu)
+        self.exit_action.triggered.connect(self.exit_app)
+        for action in (self.toggle_action, self.once_action):
+            menu.addAction(action)
         menu.addSeparator()
-        menu.addAction(exit_action)
-        tray.setContextMenu(menu)
-        tray.show()
-        return tray
+        for action in (
+            self.region_action,
+            self.fullscreen_action,
+            self.button_action,
+            self.settings_action,
+        ):
+            menu.addAction(action)
+        menu.addSeparator()
+        menu.addAction(self.exit_action)
+        return menu
 
-    def select_region(self):
+    def _on_tray_activated(self, reason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self.toggle_translation()
+
+    def _set_floating_visible(self, visible: bool) -> None:
+        self.config.set("show_floating_button", visible)
+        self.floating.setVisible(visible)
+
+    def _register_hotkeys(self) -> None:
+        keys = self.config.get("hotkeys", {})
+        bindings = {
+            keys.get("toggle_translation", ""): self.bridge.toggle.emit,
+            keys.get("translate_once", ""): self.bridge.once.emit,
+            keys.get("select_region", ""): self.bridge.region.emit,
+        }
+        bindings.pop("", None)
+        if not self.hotkeys.start(bindings):
+            LOGGER.info("Global hotkeys disabled (pynput missing or unsupported session)")
+
+    def notify(self, message: str) -> None:
+        LOGGER.warning(message)
+        if QSystemTrayIcon.supportsMessages() and self.tray.isVisible():
+            self.tray.showMessage("OmniView Translator", message)
+        else:
+            QMessageBox.information(None, "OmniView Translator", message)
+
+    def show_settings(self) -> None:
+        self.settings_window.show()
+        self.settings_window.raise_()
+        self.settings_window.activateWindow()
+
+    def apply_settings(self) -> None:
+        self.overlay.opacity = float(self.config.get("overlay_opacity", 1.0))
+        self.overlay.font_size = int(self.config.get("font_size", 0))
+        self.floating.setVisible(bool(self.config.get("show_floating_button", True)))
+        self.button_action.setChecked(self.floating.isVisible())
+        self._register_hotkeys()
+        if self.is_running():
+            live = self.worker.live if self.worker else True
+            self.stop_translation()
+            self.start_translation(live=live)
+
+    # ---------------------------------------------------------------- region
+    def current_region(self) -> LogicalRect:
+        region = self.config.get("region")
+        if isinstance(region, dict) and region.get("width", 0) > 0:
+            return (int(region["x"]), int(region["y"]), int(region["width"]), int(region["height"]))
+        geometry = QGuiApplication.primaryScreen().geometry()
+        return geometry.x(), geometry.y(), geometry.width(), geometry.height()
+
+    def select_region(self) -> None:
+        self.stop_translation()
         self.selector = RegionSelector()
         self.selector.region_selected.connect(self._on_region_selected)
         self.selector.show()
+        self.selector.activateWindow()
 
-    def _on_region_selected(self, bbox: tuple):
+    def _on_region_selected(self, bbox: tuple) -> None:
         x, y, w, h = bbox
         self.config.set("region", {"x": x, "y": y, "width": w, "height": h})
-        self.overlay.setGeometry(x, y, max(240, w), max(120, h))
+        self.start_translation()
 
-    def start_translation(self):
-        if self.worker and self.worker.isRunning():
+    def use_full_screen(self) -> None:
+        self.config.set("region", None)
+        if self.is_running():
+            self.stop_translation()
+            self.start_translation()
+
+    # ------------------------------------------------------------ translating
+    def is_running(self) -> bool:
+        return bool(self.worker and self.worker.isRunning())
+
+    def toggle_translation(self) -> None:
+        if self.is_running():
+            self.stop_translation()
+        else:
+            self.start_translation()
+
+    def translate_once(self) -> None:
+        if self.is_running():
+            self.stop_translation()
             return
+        self.start_translation(live=False)
+
+    def start_translation(self, live: bool = True) -> None:
+        if self.is_running():
+            return
+        region = self.current_region()
+        self.overlay.clear_now()
+        self.overlay.setGeometry(*region)
         self.overlay.show()
-        self.worker = TranslationWorker(self.config)
-        self.worker.translated.connect(self.overlay.set_text)
+        self.worker = TranslationWorker(self.config, region, self.overlay, live=live)
+        self.worker.blocks_ready.connect(self._show_blocks)
+        self.worker.status.connect(self.notify)
+        self.worker.busy.connect(self._on_busy)
+        self.worker.finished.connect(self._on_worker_finished)
         self.worker.start()
+        self._set_active(True)
 
-    def stop_translation(self):
-        if self.worker:
-            self.worker.stop()
-            self.worker.wait(1000)
+    def stop_translation(self) -> None:
+        worker = self.worker
+        if worker:
+            worker.stop()
+            # Worker may be blocked waiting on the GUI thread; keep the event loop alive.
+            while worker.isRunning():
+                worker.wait(50)
+                self.qt_app.processEvents()
+        self.worker = None
+        self.overlay.clear_now()
         self.overlay.hide()
+        self._set_active(False)
 
-    def exit_app(self):
+    def _on_worker_finished(self) -> None:
+        if self.worker is not None and not self.worker.isRunning():
+            if not self.worker.live:  # one-shot finished by itself
+                self.stop_translation()
+
+    def _set_active(self, active: bool) -> None:
+        self.toggle_action.setText("Stop translating" if active else "Start translating")
+        self.tray.setIcon(make_icon(active))
+        self.floating.set_state(active)
+
+    def _on_busy(self, busy: bool) -> None:
+        running = self.is_running()
+        self.floating.set_state(running, busy and running)
+
+    def _show_blocks(self, blocks: List[TextBlock], scale: float) -> None:
+        if not self.is_running():
+            return
+        scale = scale or 1.0
+        items = []
+        for block in blocks:
+            x, y, w, h = block.box
+            rect = QRect(
+                round(x / scale),
+                round(y / scale),
+                max(8, round(w / scale)),
+                max(8, round(h / scale)),
+            )
+            items.append(
+                OverlayItem(
+                    rect, block.translated, QColor(*block.background), QColor(*block.foreground)
+                )
+            )
+        self.overlay.set_items(items)
+
+    def exit_app(self) -> None:
         self.stop_translation()
+        self.hotkeys.stop()
+        self.tray.hide()
         self.qt_app.quit()
 
-    def run(self):
+    def run(self) -> int:
         return self.qt_app.exec()
 
 

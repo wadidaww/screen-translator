@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">OmniView Translator</string>
+    <string name="tile_label">Screen translate</string>
+    <string name="channel_name">Floating translator</string>
+    <string name="notif_idle">Tap the bubble to translate the screen</string>
+    <string name="notif_active">Translating your screen</string>
+    <string name="action_toggle">Start / stop</string>
+    <string name="action_close">Close</string>
+</resources>
