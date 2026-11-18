@@ -99,6 +99,9 @@ class OCREngine:
     def tesseract_available() -> bool:
         if pytesseract is None:
             return False
+        if pytesseract.pytesseract.tesseract_cmd == "tesseract":
+            # Not configured yet: look for TESSERACT_CMD, a bundled copy or the Windows default.
+            OCREngine._configure_tesseract(None)
         try:
             pytesseract.get_tesseract_version()
             return True
